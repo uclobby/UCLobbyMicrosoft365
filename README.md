@@ -14,6 +14,14 @@ Please use the PowerShell Gallery to install this module:
 <br/>https://uclobby.com/uclobby-microsoft-365-powershell-module/
 
 <br/>Change Log:
+<br/>1.0.1 - 2025/11/03
+<ul>
+  <li>Export-UcM365LicenseAssignment
+  <br/>Patch: Issue when using EntraAuth to authenticate to Microsoft Graph.
+  <br/>Patch: SkipServicePlan was ignored when using DuplicateServicePlansOnly.
+  <br/>Patch: Performance improvement by reducing the ammount of writes to file.
+  </li>
+</ul>
 <br/>1.0.0 - 2025/07/23
 <ul>
   <li>Major: Initial Release uploaded to PowerShell Gallery</li>

@@ -20,7 +20,7 @@ function Get-UcM365Domains {
     $regex = "^(.*@)(.*[.].*)$"
     $outDomains = [System.Collections.ArrayList]::new()
     try {
-        #2025-07-23: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
+        #CD20250723: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
         Test-UcPowerShellModule | Out-Null
         
         $AllowedAudiences = Invoke-WebRequest -Uri ("https://accounts.accesscontrol.windows.net/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
@@ -34,7 +34,7 @@ function Get-UcM365Domains {
         }
     }
     catch {
-        #20240318 - Support for GCC High tenants.
+        #CD20240318: Support for GCC High tenants.
         try {
             $AllowedAudiences = Invoke-WebRequest -Uri ("https://login.microsoftonline.us/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
         }

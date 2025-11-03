@@ -34,7 +34,8 @@ function Invoke-UcGraphRequest {
         [object]$Requests,
         [switch]$Beta,
         [switch]$IncludeBody,
-        [string]$Activity
+        [string]$Activity,
+        [switch]$Raw
     )
     #This is an easy way to switch between v1.0 and beta.
     $BatchPath = "`$batch"
@@ -47,24 +48,55 @@ function Invoke-UcGraphRequest {
     if (!$Requests) {
         if ($script:GraphEntraAuth) {
             if ($Header) {
-                return Invoke-EntraRequest -Path $Path -NoPaging -Header $Header
+                if ($Raw) {
+                    #We need do specify both Raw and NoPaging since we want the calling function to handle it.
+                    return Invoke-EntraRequest -Path $Path -Header $Header -Raw -NoPaging
+                }
+                else {
+                    return Invoke-EntraRequest -Path $Path -Header $Header
+                }
             } 
-            return Invoke-EntraRequest -Path $Path -NoPaging
+            if ($Raw) {
+                #We need do specify both Raw and NoPaging since we want the calling function to handle it.
+                return Invoke-EntraRequest -Path $Path -Raw -NoPaging
+            }
+            else {
+                return Invoke-EntraRequest -Path $Path
+            }
         }
         else {
-            if ($Header) {
-                $GraphResponse = Invoke-MgGraphRequest -Uri ("/v1.0/" + $Path) -Headers $Header
-            }
-            else {
-                $GraphResponse = Invoke-MgGraphRequest -Uri ("/v1.0/" + $Path)
-            }
-            #When it's more than one result Invoke-MgGraphRequest returns "value", we need to remove it to match EntraAuth behaviour.
-            if ($GraphResponse.value) {
-                return $GraphResponse.value
-            }
-            else {
+            #CD20251017 - Adding multipage support for Invoke-MgGraphRequest and moving the old beahviour to Raw switch.
+            if ($Path -notlike "*/v1.0/*") {
+                $Path = "/v1.0" + $Path
+            } 
+            
+            if ($Raw) {
+                if ($Header) {
+                    $GraphResponse = Invoke-MgGraphRequest -Uri $Path -Headers $Header
+                }
+                else {
+                    $GraphResponse = Invoke-MgGraphRequest -Uri $Path
+                }
                 return $GraphResponse
-            }
+            }            
+            
+            $outGraphResponse = @()
+            do {
+                if ($Header) {
+                    $GraphResponse = Invoke-MgGraphRequest -Uri $Path -Headers $Header
+                }
+                else {
+                    $GraphResponse = Invoke-MgGraphRequest -Uri $Path
+                }
+                if ($GraphResponse.value) {
+                    $outGraphResponse += $GraphResponse.value
+                }
+                else {
+                    $outGraphResponse += $GraphResponse
+                }
+                $Path = $GraphResponse.'@odata.nextLink'
+            } while ($Path)
+            return $outGraphResponse
         }
     }
     else {
@@ -85,11 +117,10 @@ function Invoke-UcGraphRequest {
                 $g++
                 $grapRequestBody = ' { "requests":  ' + ($tmpGraphRequests  | ConvertTo-Json) + ' }' 
                 if ($script:GraphEntraAuth) {
-                    #TODO: Add support for Graph Batch with EntraAuth
                     $GraphResponses += (Invoke-EntraRequest -Path $BatchPath -Body $grapRequestBody -Method Post -Header $requestHeader).responses
                 }
                 else {
-                    $GraphResponses += (Invoke-MgGraphRequest -Method Post -Uri ("/v1.0/" + $BatchPath) -Body $grapRequestBody).responses
+                    $GraphResponses += (Invoke-MgGraphRequest -Method Post -Uri ("/v1.0/" + $BatchPath) -Body $grapRequestBody -Headers $requestHeader).responses
                 }
                 $tmpGraphRequests = [System.Collections.ArrayList]::new()
             }
@@ -97,7 +128,7 @@ function Invoke-UcGraphRequest {
         
         if ($tmpGraphRequests.Count -gt 0) {
             Write-Progress -Activity $Activity -Status "Running batch $g of $batchCount"
-            #TO DO: Look for alternatives instead of doing this.
+            #TODO: Look for alternatives instead of doing this.
             if ($tmpGraphRequests.Count -gt 1) {
                 $grapRequestBody = ' { "requests":  ' + ($tmpGraphRequests | ConvertTo-Json) + ' }' 
             }
@@ -106,11 +137,10 @@ function Invoke-UcGraphRequest {
             }
             try {
                 if ($script:GraphEntraAuth) {
-                    #TODO: Add support for Graph Batch with EntraAuth
                     $GraphResponses += (Invoke-EntraRequest -Path $BatchPath -Body $grapRequestBody -Method Post -Header $requestHeader).responses
                 }
                 else {
-                    $GraphResponses += (Invoke-MgGraphRequest -Method Post -Uri  ("/v1.0/" + $BatchPath) -Body $grapRequestBody).responses
+                    $GraphResponses += (Invoke-MgGraphRequest -Method Post -Uri  ("/v1.0/" + $BatchPath) -Body $grapRequestBody -Headers $requestHeader).responses
                 }
             }
             catch {
@@ -135,7 +165,6 @@ function Invoke-UcGraphRequest {
                     while (![string]::IsNullOrEmpty($GraphURI_NextPage)) {
                         try {
                             if ($script:GraphEntraAuth) {
-                                #TODO: Add support for Graph Batch with EntraAuth, for now we need to use NoPaging to have the same behaviour as Invoke-MgGraphRequest
                                 $graphNextPageResponse = Invoke-EntraRequest -Path $GraphURI_NextPage -NoPaging
                             }
                             else {

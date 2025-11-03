@@ -36,6 +36,7 @@
         .EXAMPLE 
         PS> Export-UcM365LicenseAssignment -UseFriendlyNames
     #>
+    [cmdletbinding()]
     param(
         [string]$SKU,    
         [switch]$UseFriendlyNames,
@@ -50,12 +51,12 @@
         return
     }
 
-    #2025-07-23: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
+    #CD20250723: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
     Test-UcPowerShellModule | Out-Null
     #endregion
     
     $outFile = "M365LicenseAssigment_" 
-    #region 2024-09-05: Users with Duplicate Service Plans
+    #region CD20240905: Users with Duplicate Service Plans
     if ($DuplicateServicePlansOnly) {
         $outFile += "DuplicateServicePlansOnly_"
     }
@@ -75,7 +76,7 @@
     }
         
     if ($UseFriendlyNames) {
-        #2023-10-19: Change: OutputPath will be for both report and Product names and service plan identifiers for licensing.csv
+        #CD20231019: OutputPath will be for both report and Product names and service plan identifiers for licensing.csv
         $SKUnSPFilePath = [System.IO.Path]::Combine($OutputPath, "Product names and service plan identifiers for licensing.csv")
         if (!(Test-Path -Path $SKUnSPFilePath)) {
             try {
@@ -95,7 +96,7 @@
         }
     }
 
-    #region 2024-09-05: Combined Graph calls for SKUs, Licensed Groups
+    #region CD20240905: Combined Graph calls for SKUs, Licensed Groups
     #Tenant SKUs - All Licenses that exist in the tenant
     $graphRequests = [System.Collections.ArrayList]::new()
     $gRequestTmp = New-Object -TypeName PSObject -Property @{
@@ -127,10 +128,10 @@
     }
     #endregion
 
-    #region 2023-10-19: Adding filter to SKU
+    #region CD20231019: Adding filter to SKU
     if ($SKU) {
         if ($UseFriendlyNames) {
-            #2024-10-22: Change to allow to search using SKU parameter instead of exact match.
+            #CD20241022: Change to allow to search using SKU parameter instead of exact match.
             $SKUGUID = ($SKUnSP | Where-Object { $_.String_Id -match $SKU -or $_.Product_Display_Name -match $SKU } | Sort-Object GUID -Unique ).GUID
             $TenantSKUs = $TenantSKUs | Where-Object { $_.skuId -in $SKUGUID -or $_.skuPartNumber -match $SKU }
             if ($TenantSKUs.count -eq 0) {
@@ -139,7 +140,7 @@
             }
         }
         else {
-            #2024-10-22: Change to allow to search using SKU parameter instead of exact match.
+            #CD20241022: Change to allow to search using SKU parameter instead of exact match.
             $TenantSKUs = $TenantSKUs | Where-Object { $_.skuPartNumber -match $SKU }
             if ($TenantSKUs.count -eq 0) {
                 Write-Warning "Could not find `"$SKU`" (SKU Part Number) subscription associated with the tenant."
@@ -152,7 +153,7 @@
     }
     #endregion
 
-    #region 2023-10-19: Getting all Service Plans for new matrix style report
+    #region CD20231019: Getting all Service Plans for new matrix style report
     $allServicePlans = [System.Collections.ArrayList]::new()
     foreach ($TenantSKU in $TenantSKUs) {
         $tmpUserServicePlans = $TenantSKU.ServicePlans | Where-Object -Property appliesTo -EQ -Value "User" 
@@ -177,7 +178,7 @@
     }
     #Sorting service plans by name and creating the file header
     $allServicePlans = $allServicePlans | Sort-Object ServicePlanName
-    $row = "UserPrincipalName,LicenseAssigned,LicenseAssignment,LicenseAssignmentGroup"
+    $row = "UserPrincipalName,LicenseAssigned,LicenseState,LicenseAssignment,LicenseAssignmentGroup"
     if (!($SkipServicePlan)) {
         foreach ($ServicePlan in $allServicePlans) {
             $row += "," + $ServicePlan.servicePlanName
@@ -187,118 +188,161 @@
     #endregion
 
     Write-Progress -Id 2 -Activity "Export-UcM365LicenseAssignment, Step 2: Reading users assigned licenses/service plans"
+    #region CD20240905: Users with Duplicate Service Plans
     if ($DuplicateServicePlansOnly) {
-        #region 2024-09-05: Users with Duplicate Service Plans
         #We need to check license per user, this is slower than check per SKU like in Licensing Assignment but required in order to detect duplicates.
-        $TotalUsers = 0
-        $usersProcessed = 0
-        $GraphNextPage = "/users?`$filter=assignedLicenses/`$count ne 0&`$count=true&`$select=userPrincipalName,licenseAssignmentStates&`$top=999"
-        do {
-            $GraphResponse = Invoke-UcGraphRequest -Path $GraphNextPage -Headers $GraphRequestHeader
-            $GraphNextPage = $GraphResponse.'@odata.nextLink'
-            $UsersWithLicenses = $GraphResponse.value
-            if (![string]::IsNullOrEmpty($GraphResponse.'@odata.count')) {
-                $TotalUsers = $GraphResponse.'@odata.count'
-            }
-            
-            foreach ($LicensedUser in $UsersWithLicenses) {
-                $usersProcessed++
-                #Update the status every 100 users
-                if (($usersProcessed % 100 -eq 0) -or ($usersProcessed -eq $TotalUsers) -or ($usersProcessed -eq 1) ) {
-                    Write-Progress -Id 2 -Activity "Export-UcM365LicenseAssignment, Step 2: Reading users assigned licenses/service plans" -Status "$usersProcessed of $TotalUsers"
-                }
-                #We only need to process users that have 2 or more licenses assigned.
-                if ($LicensedUser.licenseAssignmentStates.count -gt 1) {
-                    $tmpUserServicePlans = [System.Collections.ArrayList]::new()
-                    foreach ($licenseState in $LicensedUser.licenseAssignmentStates) {
-                        #If not a in the Tenant SKUs we can skip it
-                        if ($licenseState.skuId -in $TenantSKUs.skuId) {
-                            $tmpLicenseInfo = ($TenantSKUs | Where-Object { $_.skuId -eq $licenseState.skuId })
-                            $LicenseDisplayName = $tmpLicenseInfo.skuPartNumber
-                            if ($UseFriendlyNames) {
-                                $LicenseDisplayName = ($SKUnSP | Where-Object { $_.GUID -eq $licenseState.skuId } | Sort-Object Product_Display_Name -Unique).Product_Display_Name
-                            }
-                            if ([string]::IsNullOrEmpty($LicenseDisplayName)) {
-                                $LicenseDisplayName = $licenseState.skuId
-                            }
-                            $licenseAssignment = "Direct"
-                            $licenseAssignmentGroup = "NA"
-                            if (!([string]::IsNullOrEmpty($licenseState.assignedByGroup))) {
-                                $licenseAssignment = "Inherited"
-                                $licenseAssignmentGroup = ($GroupsWithLicenses | Where-Object -Property "id" -EQ -Value $licenseState.assignedByGroup).displayName
-                                if ([string]::IsNullOrEmpty($licenseAssignmentGroup)) {
-                                    $licenseAssignmentGroup = $licenseState.assignedByGroup
-                                }
-                            }
-                            
-                            $SKUUserServicePlans = $tmpLicenseInfo.servicePlans | Where-Object -Property appliesTo -EQ -Value "User" | Sort-Object servicePlanName
-                            foreach ($SKUUserServicePlan in $SKUUserServicePlans) {
-                                $SPStatus = "Off"
-                                if ($SKUUserServicePlan.servicePlanId -notin $licenseState.disabledPlans) {
-                                    $SPStatus = "On"
-                                }
-                                $ObjUserServicePlans = [PSCustomObject]@{
-                                    LicenseSkuId           = $licenseState.skuId
-                                    LicenseDisplayName     = $LicenseDisplayName
-                                    LicenseAssignment      = $licenseAssignment
-                                    LicenseAssignmentGroup = $licenseAssignmentGroup
-                                    ServicePlanId          = $SKUUserServicePlan.servicePlanId
-                                    ServicePlanName        = $SKUUserServicePlan.servicePlanName
-                                    Status                 = $SPStatus
-                                }
-                                [void]$tmpUserServicePlans.Add($ObjUserServicePlans)
-                            }
-                        }
+        $usersProcessed = 1
+        $UserLicenseAssignmentURI = "/users?`$filter=assignedLicenses/`$count ne 0&`$count=true&`$select=userPrincipalName,licenseAssignmentStates&`$top=999"
+        #region CD20251017: On larger tenants is better to process each graph response that can have up to 999 results.
+        try {
+            do {
+                $GraphResponse = Invoke-UcGraphRequest -Path $UserLicenseAssignmentURI -Header $GraphRequestHeader -Raw
+                $UserLicenseAssignmentURI = $GraphResponse.'@odata.nextLink'
+                #We only want to run this once so we can use the usersProcessed.
+                if ($usersProcessed -eq 1 ) {
+                    $TotalUsers = $GraphResponse.'@odata.count'
+                    #In case we dont have @odata.count it means only one entry is returned.
+                    if (!($TotalUsers)) {
+                        $TotalUsers = 1
                     }
-                    
-                    #Checking if we have more then one Service Plan
-                    #In the future we can add filters, like only if both are ON or Ignore Direct/Inherited
-                    $skuWithDupServicePlans = $tmpUserServicePlans | Group-Object -Property ServicePlanId | Where-Object { $_.Count -gt 1 } | Select-Object -ExpandProperty Group | Select-Object LicenseSkuId, LicenseDisplayName, LicenseAssignment, LicenseAssignmentGroup  | Sort-Object -Property LicenseDisplayName, LicenseAssignment, LicenseAssignmentGroup -Unique 
-                    if (($skuWithDupServicePlans.Count -gt 0)) {
-                        foreach ($UserLicenseState in  $skuWithDupServicePlans) {
-                            foreach ($ServicePlan in $allServicePlans) {
-                                $tmpSPStatus = $tmpUserServicePlans | Where-Object { $UserLicenseState.LicenseSkuId -eq $_.LicenseSkuId -and $UserLicenseState.LicenseAssignment -eq $_.LicenseAssignment -and $UserLicenseState.LicenseAssignmentGroup -eq $_.LicenseAssignmentGroup -and $_.servicePlanId -eq $servicePlan.servicePlanId }
-                                if ($tmpSPStatus.Status -in ("On", "Off")) {
-                                    $userServicePlans += "," + $tmpSPStatus.Status
+                }
+                if ($GraphResponse.value) {
+                    $UsersWithLicenses = $GraphResponse.value
+                }
+                else {
+                    $UsersWithLicenses = $GraphResponse
+                }
+                foreach ($LicensedUser in $UsersWithLicenses) {
+                    #Update the status every 100 users
+                    if (($usersProcessed % 100 -eq 0) -or ($usersProcessed -eq $TotalUsers) -or ($usersProcessed -eq 1) ) {
+                        Write-Progress -Id 2 -Activity "Export-UcM365LicenseAssignment, Step 2: Reading users assigned licenses/service plans" -Status "$usersProcessed of $TotalUsers"
+                    }
+                    $tmpUserServicePlans = [System.Collections.ArrayList]::new()
+                    #We only need to process users that have 2 or more licenses assigned.
+                    if ($LicensedUser.licenseAssignmentStates.count -gt 1) {
+                        foreach ($licenseState in $LicensedUser.licenseAssignmentStates) {
+                            #If not a in the Tenant SKUs we can skip it
+                            if ($licenseState.skuId -in $TenantSKUs.skuId) {
+                                $tmpLicenseInfo = ($TenantSKUs | Where-Object { $_.skuId -eq $licenseState.skuId })
+                                $LicenseDisplayName = $tmpLicenseInfo.skuPartNumber
+                                if ($UseFriendlyNames) {
+                                    $LicenseDisplayName = ($SKUnSP | Where-Object { $_.GUID -eq $licenseState.skuId } | Sort-Object Product_Display_Name -Unique).Product_Display_Name
+                                }
+                                if ([string]::IsNullOrEmpty($LicenseDisplayName)) {
+                                    $LicenseDisplayName = $licenseState.skuId
+                                }
+                                $licenseAssignment = "Direct"
+                                $licenseAssignmentGroup = "NA"
+                                if (!([string]::IsNullOrEmpty($licenseState.assignedByGroup))) {
+                                    $licenseAssignment = "Inherited"
+                                    $licenseAssignmentGroup = ($GroupsWithLicenses | Where-Object -Property "id" -EQ -Value $licenseState.assignedByGroup).displayName
+                                    if ([string]::IsNullOrEmpty($licenseAssignmentGroup)) {
+                                        $licenseAssignmentGroup = $licenseState.assignedByGroup
+                                    }
+                                }
+                                if ($SkipServicePlan) {
+                                    $ObjUserServicePlans = [PSCustomObject]@{
+                                        LicenseSkuId           = $licenseState.skuId
+                                        LicenseDisplayName     = $LicenseDisplayName
+                                        LicenseState           = $licenseState.state
+                                        LicenseAssignment      = $licenseAssignment
+                                        LicenseAssignmentGroup = $licenseAssignmentGroup
+                                    }
+                                    [void]$tmpUserServicePlans.Add($ObjUserServicePlans)
                                 }
                                 else {
-                                    $userServicePlans += ","
+                                    $SKUUserServicePlans = $tmpLicenseInfo.servicePlans | Where-Object -Property appliesTo -EQ -Value "User" | Sort-Object servicePlanName
+                                    foreach ($SKUUserServicePlan in $SKUUserServicePlans) {
+                                        $SPStatus = "Off"
+                                        if ($SKUUserServicePlan.servicePlanId -notin $licenseState.disabledPlans) {
+                                            $SPStatus = "On"
+                                        }
+                                        $ObjUserServicePlans = [PSCustomObject]@{
+                                            LicenseSkuId           = $licenseState.skuId
+                                            LicenseDisplayName     = $LicenseDisplayName
+                                            LicenseState           = $licenseState.state
+                                            LicenseAssignment      = $licenseAssignment
+                                            LicenseAssignmentGroup = $licenseAssignmentGroup
+                                            ServicePlanId          = $SKUUserServicePlan.servicePlanId
+                                            ServicePlanName        = $SKUUserServicePlan.servicePlanName
+                                            Status                 = $SPStatus
+                                        }
+                                        [void]$tmpUserServicePlans.Add($ObjUserServicePlans)
+                                    }
                                 }
                             }
-                            $row += $LicensedUser.userPrincipalName + "," + $UserLicenseState.LicenseDisplayName + "," + $UserLicenseState.LicenseAssignment + "," + $UserLicenseState.LicenseAssignmentGroup + $userServicePlans
-                            Out-File -FilePath $OutputFilePath -InputObject $row -Encoding UTF8 -append
-                            $row = ""
-                            $userServicePlans = ""
+                        }
+                        #Checking if we have more then one Service Plan
+                        #In the future we can add filters, like only if both are ON or Ignore Direct/Inherited
+                        $userServicePlans = ""
+                        if ($SkipServicePlan) {
+                            $skuWithDupServicePlans = $tmpUserServicePlans | Group-Object -Property LicenseSkuId | Where-Object { $_.Count -gt 1 } | Select-Object -ExpandProperty Group | Select-Object LicenseSkuId, LicenseDisplayName, LicenseState , LicenseAssignment, LicenseAssignmentGroup  | Sort-Object -Property LicenseDisplayName, LicenseAssignment, LicenseAssignmentGroup -Unique 
+                        }
+                        else {
+                            $skuWithDupServicePlans = $tmpUserServicePlans | Group-Object -Property ServicePlanId | Where-Object { $_.Count -gt 1 } | Select-Object -ExpandProperty Group | Select-Object LicenseSkuId, LicenseDisplayName, LicenseState , LicenseAssignment, LicenseAssignmentGroup | Sort-Object -Property LicenseDisplayName, LicenseAssignment, LicenseAssignmentGroup -Unique 
+                        }
+                        foreach ($UserLicenseState in  $skuWithDupServicePlans) {
+                            if (($skuWithDupServicePlans.Count -gt 0)) {
+                                if (!($SkipServicePlan)) {
+                                    foreach ($ServicePlan in $allServicePlans) {
+                                        $tmpSPStatus = $tmpUserServicePlans | Where-Object { $UserLicenseState.LicenseSkuId -eq $_.LicenseSkuId -and $UserLicenseState.LicenseAssignment -eq $_.LicenseAssignment -and $UserLicenseState.LicenseAssignmentGroup -eq $_.LicenseAssignmentGroup -and $_.servicePlanId -eq $servicePlan.servicePlanId }
+                                        $userServicePlans += "," + $tmpSPStatus.Status
+                                    }                        
+                                }
+                                $row += $LicensedUser.userPrincipalName + "," + $UserLicenseState.LicenseDisplayName + "," + $UserLicenseState.LicenseState + "," + $UserLicenseState.LicenseAssignment + "," + $UserLicenseState.LicenseAssignmentGroup + $userServicePlans + [Environment]::NewLine
+                                $userServicePlans = ""
+                            }
                         }
                     }
+                    $usersProcessed++
                 }
-            }
-        } while (!([string]::IsNullOrEmpty($GraphNextPage)))
+                if ($row) {
+                    Out-File -FilePath $OutputFilePath -InputObject $row -Encoding UTF8 -Append -NoNewline
+                    $row = ""
+                }
+            } while ($UserLicenseAssignmentURI)
+        }
+        catch {}
         #endregion
     }
+    #endregion
     else {
         #region License Assignment
         foreach ($TenantSKU in $TenantSKUs) {
             $LicenseDisplayName = $TenantSKU.skuPartNumber
             if ($UseFriendlyNames) {
                 $tmpFriendlyName = ($SKUnSP | Where-Object { $_.GUID -eq $TenantSKU.skuID } | Sort-Object Product_Display_Name -Unique).Product_Display_Name
-                #2024-10-22: To prevent empty name when a license exists in the tenant but the data is not available in "Products names and Services Identifiers" file.
+                #CD20241022: To prevent empty name when a license exists in the tenant but the data is not available in "Products names and Services Identifiers" file.
                 if ($tmpFriendlyName) {
                     $LicenseDisplayName = $tmpFriendlyName
                 }  
             }
             $SKUUserServicePlans = $TenantSKU.servicePlans | Where-Object -Property appliesTo -EQ -Value "User" | Sort-Object servicePlanName
-            $usersProcessed = 0       
-            $GraphRequestURI = "https://graph.microsoft.com/v1.0/users?`$filter=assignedLicenses/any(u:u/skuId eq " + $TenantSKU.skuId + " )&`$select=userPrincipalName,licenseAssignmentStates&`$orderby=userPrincipalName&`$count=true&`$top=999"
-            do {
-                try {
-                    $UsersWithLicenses = Invoke-MgGraphRequest -Method Get -Uri $GraphRequestURI -Headers $GraphRequestHeader
-                    if (![string]::IsNullOrEmpty($UsersWithLicenses.'@odata.count')) {
-                        $TotalUsers = $UsersWithLicenses.'@odata.count'
+            $usersProcessed = 1       
+            $GraphRequestURI = "/users?`$filter=assignedLicenses/any(u:u/skuId eq " + $TenantSKU.skuId + " )&`$select=userPrincipalName,licenseAssignmentStates&`$orderby=userPrincipalName&`$count=true&`$top=999"
+            Write-Verbose ("Next Request URI: $GraphRequestURI - " + $GraphRequestURI.count)
+            #region CD20251017: On larger tenants is better to process each graph response that can have up to 999 results.
+            try {
+                do {
+                    $GraphResponse = Invoke-UcGraphRequest -Path $GraphRequestURI -Header $GraphRequestHeader -Raw
+                    $GraphRequestURI = $GraphResponse.'@odata.nextLink'
+                    #We only want to run this once so we can use the usersProcessed.
+                    if ($usersProcessed -eq 1 ) {
+                        
+                        $TotalUsers = $GraphResponse.'@odata.count'
+                        #In case we dont have @odata.count it means only one entry is returned.
+                        if (!($TotalUsers)) {
+                            $TotalUsers = 1
+                        }
                     }
-                    $GraphRequestURI = $UsersWithLicenses.'@odata.nextLink'
-                    foreach ($UserWithLicense in $UsersWithLicenses.value) {
-                        if (($usersProcessed % 1000 -eq 0) -or ($usersProcessed -eq $TotalUsers)) {
+                    if ($GraphResponse.value) {
+                        $UsersWithLicenses = $GraphResponse.value
+                    }
+                    else {
+                        $UsersWithLicenses = $GraphResponse
+                    }
+                    foreach ($UserWithLicense in $UsersWithLicenses) {
+                        if (($usersProcessed % 100 -eq 0) -or ($usersProcessed -eq $TotalUsers)) {
                             Write-Progress -ParentId 2 -Activity "Checking license assignments for $LicenseDisplayName" -Status "$usersProcessed of $TotalUsers"
                         }
                         $tmpLicenseAssignmentStates = $UserWithLicense.licenseAssignmentStates | Where-Object -Property skuId -EQ -Value $TenantSKU.skuId | Sort-Object assignedByGroup
@@ -328,25 +372,29 @@
                                     }
                                 }
                             }
-                            $row += $UserWithLicense.userPrincipalName + "," + $LicenseDisplayName + "," + $LicenseAssignment + "," + $LicenseAssignmentGroup + $userServicePlans
-                            Out-File -FilePath $OutputFilePath -InputObject $row -Encoding UTF8 -append
-                            $row = ""
+                            $row += $UserWithLicense.userPrincipalName + "," + $LicenseDisplayName + "," + $licenseState.state + "," + $LicenseAssignment + "," + $LicenseAssignmentGroup + $userServicePlans + [Environment]::NewLine 
                         }
                         $usersProcessed++
                     }
-                }
-                catch {
-                    Write-Warning ("Failed to get Users with assigned SKU Id: " + $TenantSKU.skuID)
-                    $GraphRequestURI = ""
-                }
-            } while (![string]::IsNullOrEmpty($GraphRequestURI))
+                    #CD20251017: Improving performance by only writing to the output file once per request instead of every line.
+                    if ($row) {
+                        Out-File -FilePath $OutputFilePath -InputObject $row -Encoding UTF8 -Append -NoNewline
+                        $row = ""
+                    }
+                } while ($GraphRequestURI)
+            }
+            catch {
+                Write-Warning ("Failed to get Users with assigned SKU Id: " + $TenantSKU.skuID)
+                $GraphRequestURI = ""
+            }
+            #endregion
         }
         #endregion
     }
 
     if ($usersProcessed -gt 0) {
         Write-Host ("Results available in " + $OutputFilePath) -ForegroundColor Cyan
-        #region 2023-10-19: Added execution time to the output.
+        #region CD20231019: Added execution time to the output.
         $endTime = Get-Date
         $totalSeconds = [math]::round(($endTime - $startTime).TotalSeconds, 2)
         $totalTime = New-TimeSpan -Seconds $totalSeconds

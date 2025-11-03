@@ -21,7 +21,7 @@ function Get-UcM365TenantId {
     $regexOnMicrosoftDomain = "^(.*@)(?!.*mail)(.*.onmicrosoft.com)$"
 
     try {
-        #2025-07-23: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
+        #CD20250723: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
         Test-UcPowerShellModule | Out-Null
 
         $AllowedAudiences = Invoke-WebRequest -Uri ("https://accounts.accesscontrol.windows.net/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
