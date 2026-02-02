@@ -1,4 +1,4 @@
-﻿function Export-UcM365LicenseAssignment {
+function Export-UcM365LicenseAssignment {
     <#
         .SYNOPSIS
         Generate a report of the User assigned licenses either direct or assigned by group (Inherited)
@@ -88,7 +88,7 @@
             }
         }
         try {
-            $SKUnSP = import-CSV -Path $SKUnSPFilePath
+            $SKUnSP = Import-Csv -Path $SKUnSPFilePath
         }
         catch {
             Write-Warning "Could not import Service Plan ID file."
