@@ -53,10 +53,10 @@ function Test-UcServiceConnection {
             if ($MSGraphAuthAvailable -and !$script:GraphEntraAuth) {
                 $MgGraphContext = Get-MgContext
                 $currentScopes = $MgGraphContext.Scopes
-                $AuthTokenType = (""+$MgGraphContext.AuthType).replace('AppOnly', 'Application')
+                $AuthTokenType = ("" + $MgGraphContext.AuthType).replace('AppOnly', 'Application')
             }
 
-            if(!$EntraAuthModuleAvailable -and !$MSGraphAuthAvailable) {
+            if (!$EntraAuthModuleAvailable -and !$MSGraphAuthAvailable) {
                 Write-Warning ("Missing EntraAuth PowerShell module. Please install it with:" + [Environment]::NewLine + "Install-Module EntraAuth") 
                 return $false
             }
@@ -145,7 +145,7 @@ function Test-UcServiceConnection {
                 Write-Warning "Please connect to Teams TAC API with Connect-UcTeamsDeviceTAC before running this cmdlet"
             }
         }
-        Default {
+        default {
             return $false
         }
     }

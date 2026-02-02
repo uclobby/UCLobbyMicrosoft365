@@ -1,4 +1,4 @@
-function Get-UcM365Domains {
+function Get-UcM365Domain {
     <#
         .SYNOPSIS
         Get Microsoft 365 Domains from a Tenant
@@ -12,6 +12,7 @@ function Get-UcM365Domains {
         .EXAMPLE
         PS> Get-UcM365Domains -Domain uclobby.com
     #>
+    [Alias('Get-UcM365Domains')]
     param(
         [Parameter(Mandatory = $true)]
         [string]$Domain
