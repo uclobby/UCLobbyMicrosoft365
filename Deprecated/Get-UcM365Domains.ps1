@@ -23,7 +23,7 @@ function Get-UcM365Domains {
         #CD20250723: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
         Test-UcPowerShellModule | Out-Null
         
-        $AllowedAudiences = Invoke-WebRequest -Uri ("https://accounts.accesscontrol.windows.net/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
+        $ReqResponse = Invoke-WebRequest -Uri ("https://accounts.accesscontrol.windows.net/" + $Domain + "/metadata/json/1") -UseBasicParsing 
     }
     catch [System.Net.WebException] {
         if ($PSItem.Exception.Message -eq "The remote server returned an error: (400) Bad Request.") {
@@ -36,13 +36,15 @@ function Get-UcM365Domains {
     catch {
         #CD20240318: Support for GCC High tenants.
         try {
-            $AllowedAudiences = Invoke-WebRequest -Uri ("https://login.microsoftonline.us/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
+            $ReqResponse = Invoke-WebRequest -Uri ("https://login.microsoftonline.us/" + $Domain + "/metadata/json/1") -UseBasicParsing 
         }
         catch {
             Write-Warning "Unknown error while checking domain: $Domain"
+            return
         }
     }
     try {
+        $AllowedAudiences = $ReqResponse.Content | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
         foreach ($AllowedAudience in $AllowedAudiences) {
             $temp = [regex]::Match($AllowedAudience , $regex).captures.groups
             if ($temp.count -ge 2) {

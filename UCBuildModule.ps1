@@ -1,5 +1,5 @@
 param(
-    [version]$Version = "1.0.1"
+    [version]$Version = "1.1.0"
 )
 
 #Getting module name from the current script path
