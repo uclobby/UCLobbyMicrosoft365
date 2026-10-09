@@ -16,15 +16,11 @@ function Get-UcM365TenantId {
         [Parameter(Mandatory = $true)]
         [string]$Domain
     )
-    
-    $regexTenantID = "^(.*@)(\w{8}-\w{4}-\w{4}-\w{4}-\w{12})$"
-    $regexOnMicrosoftDomain = "^(.*@)(?!.*mail)(.*.onmicrosoft.com)$"
-
     try {
         #CD20250723: All logic to check if we run this and getting the module name moved to the Test-UcPowerShellModule.
         Test-UcPowerShellModule | Out-Null
 
-        $AllowedAudiences = Invoke-WebRequest -Uri ("https://accounts.accesscontrol.windows.net/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty allowedAudiences
+        $TenantId = Invoke-WebRequest -Uri ("https://accounts.accesscontrol.windows.net/" + $Domain + "/metadata/json/1") -UseBasicParsing | ConvertFrom-Json | Select-Object -ExpandProperty Realm
     }
     catch [System.Net.Http.HttpRequestException] {
         if ($PSItem.Exception.Response.StatusCode -eq "BadRequest") {
@@ -37,28 +33,7 @@ function Get-UcM365TenantId {
     catch {
         Write-Error "Unknown error while checking domain: $Domain"
     }
-    $output = [System.Collections.ArrayList]::new()
-    $OnMicrosoftDomains = [System.Collections.ArrayList]::new()
-    $TenantID = ""
-    foreach ($AllowedAudience in $AllowedAudiences) {
-        $tempTID = [regex]::Match($AllowedAudience , $regexTenantID).captures.groups
-        $tempID = [regex]::Match($AllowedAudience , $regexOnMicrosoftDomain).captures.groups
-        if ($tempTID.count -ge 2) {
-            $TenantID = $tempTID[2].value 
-        }
-        if ($tempID.count -ge 2) {
-            [void]$OnMicrosoftDomains.Add($tempID[2].value)
-        }
-    }
-    #Multi Geo will have multiple OnMicrosoft Domains
-    foreach ($OnMicrosoftDomain in $OnMicrosoftDomains) {
-        if ($TenantID -and $OnMicrosoftDomain) {
-            $M365TidPSObj = [PSCustomObject]@{ TenantID = $TenantID
-                OnMicrosoftDomain                       = $OnMicrosoftDomain
-            }
-            $M365TidPSObj.PSObject.TypeNames.Insert(0, 'M365TenantId')
-            [void]$output.Add($M365TidPSObj)
-        }
-    }
-    return $output 
+
+    #CD20260414: Return tenant ID only after the recent Microsoft 365 change.
+    return $TenantId 
 }
